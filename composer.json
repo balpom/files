@@ -1,0 +1,21 @@
+{
+    "name": "balpom/files",
+    "description": "Simple library for read and write files with using locks.",
+    "type": "library",
+    "homepage": "https://www.balpom.ru",
+    "license": "MIT",
+    "keywords": ["file", "directory", "create", "read", "write", "delete", "update", "lock", "exclusive", "exclusive lock"],
+    "autoload": {
+        "psr-4": {
+            "Balpom\\Files\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Mikhail (Balpom)"
+        }
+    ],
+    "require": {
+        "php": ">=8.1"
+    }
+}
