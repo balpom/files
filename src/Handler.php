@@ -7,6 +7,7 @@ namespace Balpom\Files;
 abstract class Handler
 {
     protected string $filePath;
+    protected mixed $resource;
 
     public function __construct(string $filePath)
     {
