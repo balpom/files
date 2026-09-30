@@ -1,5 +1,5 @@
 # balpom/files
-## Simple library for read and write files and directories.
+## Simple library for work with files and directories.
 
 Simple realisation for files reading and writing with using locks (for multithreaded environment using).
 Provides functionality for directories creating and files and directories deleting.
