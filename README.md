@@ -1,10 +1,12 @@
 # balpom/files
-## Simple library for read and write files with using locks.
+## Simple library for read and write files and directories.
 
-Simple realisation for file reader and file writer classes for multithreaded environment using.
+Simple realisation for files reading and writing with using locks (for multithreaded environment using).
+Provides functionality for directories creating and files and directories deleting.
+Also work with files and directories creation date.
 
 ### Requirements 
-- **PHP >= 8.1**
+- **PHP >= 8.2**
 
 ### Installation
 #### Using composer (recommended)
