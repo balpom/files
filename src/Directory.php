@@ -45,6 +45,14 @@ class Directory extends Handler implements DirectoryInterface
      */
     public function delete(bool $withAllSubdirectories = false): bool
     {
+        try {
+            $this->checkBaseDirectory($this->absolutePath);
+            $this->checkDirectory($this->absolutePath);
+        } catch (DirectoryException $e) {
+            @clearstatcache(true, $this->absolutePath);
+            return !@file_exists($this->absolutePath);
+        }
+
         if (!$withAllSubdirectories) {
             $method = 'deleteDirectory';
         } else {
@@ -53,7 +61,7 @@ class Directory extends Handler implements DirectoryInterface
 
         try {
             $result = $this->$method($this->absolutePath);
-        } catch (DirectoryDeleteException $e) {
+        } catch (DirectoryException $e) {
             @clearstatcache(true, $this->absolutePath);
             return !@file_exists($this->absolutePath);
         }
@@ -68,6 +76,14 @@ class Directory extends Handler implements DirectoryInterface
      */
     public function clean(bool $withZeroSizedFiles = false): bool
     {
+        try {
+            $this->checkBaseDirectory($this->absolutePath);
+            $this->checkDirectory($this->absolutePath);
+        } catch (DirectoryException $e) {
+            @clearstatcache(true, $this->absolutePath);
+            return !@file_exists($this->absolutePath);
+        }
+
         if (!$withZeroSizedFiles) {
             $method = 'cleanDirectoryTree';
         } else {
@@ -76,7 +92,7 @@ class Directory extends Handler implements DirectoryInterface
 
         try {
             $result = $this->$method($this->absolutePath);
-        } catch (DirectoryCleanException $e) {
+        } catch (DirectoryException $e) {
             @clearstatcache(true, $this->absolutePath);
             return !file_exists($this->absolutePath);
         }
@@ -85,7 +101,7 @@ class Directory extends Handler implements DirectoryInterface
     }
 
     /*
-     * Return TRUE, in directory not contains any files or subdirectories.
+     * Return TRUE in directory what not contains any files or subdirectories.
      */
     public function empty(): bool
     {
@@ -94,6 +110,25 @@ class Directory extends Handler implements DirectoryInterface
 
     protected function isDirectoryEmpty(string $dir): bool
     {
+        $this->checkDirectory($dir);
+        $files = $this->getDirectoryContent($dir);
+
+        return 0 === count($files) ? true : false;
+    }
+
+    protected function checkBaseDirectory(string $dir): void
+    {
+        if ('' !== $this->baseDirectory) {
+            $baseDirectoryLen = strlen($this->baseDirectory);
+            $absolutePathSubstr = substr($dir, 0, $baseDirectoryLen);
+            if ($this->baseDirectory !== $absolutePathSubstr) {
+                throw new HandlerException('Base directory, if it is not empty, must be first part of absolute directory path.');
+            }
+        }
+    }
+
+    protected function checkDirectory(string $dir): void
+    {
         @clearstatcache(true, $dir);
         if (!file_exists($dir)) {
             throw new DirectoryException('Not existing directory: ' . $dir);
@@ -101,10 +136,6 @@ class Directory extends Handler implements DirectoryInterface
         if (!is_dir($dir)) {
             throw new DirectoryException('It is not a directory: ' . $dir);
         }
-
-        $files = $this->getDirectoryContent($dir);
-
-        return 0 === count($files) ? true : false;
     }
 
     protected function getDirectoryContent(string $dir): array
@@ -119,17 +150,13 @@ class Directory extends Handler implements DirectoryInterface
 
     protected function deleteDirectory(string $dir): bool
     {
-        @clearstatcache(true, $dir);
-        if (!is_dir($dir)) {
-            throw new DirectoryDeleteException('It is not a directory: ' . $dir);
-        }
-
         $counter = 0;
         while ($counter < $this->directoriesDeleteTries) {
             @clearstatcache(true, $dir);
             if (!@file_exists($dir)) {
                 return true;
             }
+
             $files = $this->getDirectoryContent($dir);
             if (0 !== count($files)) {
                 usleep(mt_rand(5000, 10000));

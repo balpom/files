@@ -7,21 +7,51 @@ namespace Balpom\Files;
 abstract class Handler implements PathInterface, TimeInterface
 {
     protected string $absolutePath;
-    protected string $rootDirectory = '/';
+    protected string $rootDirectory;
+    protected string $baseDirectory;
     private bool|null $windows = null;
     private string|false|null $windowsCodePage = null;
 
-    public function __construct(string $absolutePath = '', int $umask = 0022)
+    public function __construct(string|null $path = null, string|null $baseDirectory = null, int $umask = 0022)
     {
-        if (!empty($absolutePath)) {
-            $this->set($absolutePath, $umask);
+        if (!$this->isWindows()) {
+            $this->rootDirectory = '/';
+        } else {
+            $this->rootDirectory = $this->getRootDirectory(__DIR__);
+        }
+        $this->base($baseDirectory);
+        if (null !== $path && '' !== $path) {
+            $this->set($path, $umask);
         }
     }
 
     /*
-     * Set file or directory name (absolute path) and UMASK.
+     * Set base directory.
+     * If base directory don't define - where is root directory is base directory
+     * (file path in "set" method must be absolute).
+     *
+     * As sample:
+     * if
+     * $rootDirectory = "/" (or, as sample, "C:\" under Windows)
+     * $baseDirectory = "/var/www/app/data/"
+     * $absolutePath = "/subdir/datafile.bin"
+     * then
+     * full file path will be "/var/www/app/data/subdir/datafile.bin"
+     * else
+     * full file path will be "/subdir/datafile.bin"
+     * (or, as sample, "C:\subdir/datafile.bin" under Windows)
      */
-    abstract public function set(string $absolutePath, int $umask = 0022): PathInterface;
+    public function base(string|null $baseDirectory = null): PathInterface
+    {
+        $this->baseDirectory = $this->sanitizeBaseDirectory($baseDirectory);
+        return $this;
+    }
+
+    /*
+     * Set file or directory name (path from base directory or absolute path,
+     * if base directory not set) and UMASK.
+     */
+    abstract public function set(string $path, int $umask = 0022): PathInterface;
 
     /*
      * Check file or directory existence.
@@ -52,65 +82,114 @@ abstract class Handler implements PathInterface, TimeInterface
         return @touch($this->absolutePath, $time);
     }
 
-    protected function init(string $absolutePath = ''): void
-    {
-        if (empty($absolutePath)) {
-            throw new HandlerException('Empty file name!');
-        }
-        $first = $this->unchangeablePathPart($absolutePath);
-        if (!empty($first)) {
-            if (!$this->isWindows()) {
-                throw new HandlerException('Windows style path cannot be used under Unix-like systems.');
-            }
-            $from = strlen($first);
-        } else {
-            if ($this->isWindows()) {
-                throw new HandlerException('Only absolute path may be used.');
-            } else {
-                $first = substr($absolutePath, 0, 1);
-                if ('\\' === $first) { // Just in case. Unix-style absolute path beginning from "/".
-                    $first = '/';
-                }
-                if ('/' !== $first) {
-                    throw new HandlerException('Only absolute path may be used.');
-                }
-                $from = 1;
-            }
-        }
-
-        $last = substr($absolutePath, $from);
-        $last = str_replace('\\', '/', $last);
-        $last = preg_replace('|/+|', '/', $last);
-        $last = ltrim($last, '/');
-
-        if (2 === $from) { // Windows UNC path similar to \\192.168.1.2\Pictures\Worth or \\host\path\subpath\subsubpath
-            // Now path as \\host/path/subpath/subsubpath - Windows don't open this path!
-            // It MUST be as \\host\path/subpath/subsubpath ("\" after hostname).
-            // Now $first = "\\" and $last = "host\path/subpath/subsubpath"
-            $pos = strpos($last, '/');
-            if (false !== $pos) {
-                $first = $first . '\\' . substr($last, 0, $pos); // Now $first = "\\host\"
-                $last = substr($last, $pos + 1); // Now $last = "path/subpath/subsubpath"
-            }
-        }
-
-        if (!$this->isCorrectPath($last)) {
-            throw new HandlerException('Incorrect path name!');
-        }
-
-        if ($windowsCodePage = $this->getWindowsCodePage()) {
-            $last = iconv('utf-8', $windowsCodePage, $last);
-        }
-
-        $this->absolutePath = $first . $last;
-        $this->rootDirectory = $first;
-    }
-
-    protected function isCorrectPath(string $path = ''): bool
+    protected function init(string $path = ''): void
     {
         if ('' === $path) {
-            return false;
+            throw new HandlerException('Empty path!');
         }
+
+        $pathRootDirectory = $this->getRootDirectory($path);
+        if (false === $pathRootDirectory) {
+            // Given path is relative.
+            $path = $this->preparePath($path);
+            if ('' === $path) {
+                throw new HandlerException('Empty relative path!');
+            }
+            if (!$this->isCorrectRelativePath($path)) {
+                throw new HandlerException('Incorrect relative path!');
+            }
+            if ('' !== $this->baseDirectory) {
+                $this->absolutePath = $this->baseDirectory . $path;
+            } else {
+                $this->absolutePath = $this->rootDirectory . $path;
+            }
+        } else {
+            $path = substr($path, strlen($pathRootDirectory));
+            $path = $this->preparePath($path);
+            if (!$this->isCorrectRelativePath($path)) {
+                throw new HandlerException('Incorrect absolute path!');
+            }
+
+            $this->absolutePath = $pathRootDirectory . $path;
+
+            return;
+
+            // Всё, что ниже - постепенно удалить!
+//
+// die($pathRootDirectory . ' --- ' . $path . ' === ' . $this->baseDirectory);
+
+
+            $absolutePath = $pathRootDirectory . $path;
+
+            if ('' !== $this->baseDirectory) {
+                $baseDirectoryLen = strlen($this->baseDirectory);
+                $absolutePathSubstr = substr($absolutePath, 0, $baseDirectoryLen);
+
+// die($absolutePath . PHP_EOL . $this->baseDirectory . PHP_EOL . substr($absolutePath, 0, $baseDirectoryLen) . PHP_EOL);
+
+                if ($this->baseDirectory !== $absolutePathSubstr) {
+                    if ('/' !== substr($absolutePath, -1)) {
+                        throw new HandlerException('Absolute file path must be in base directory, if it is not empty');
+                    }
+                    $absolutePathLen = strlen($absolutePath);
+                    $baseDirectorySubstr = substr($this->baseDirectory, 0, $absolutePathLen);
+                    if ($absolutePath !== $baseDirectorySubstr) {
+                        throw new HandlerException('Absolute directory path must be part of base directory, if it is not empty');
+                    }
+
+                    // Lengthen the shorter absolute path.
+                    // As sample:
+                    // $baseDirectory = "/var/www/app/data/subdir/"
+                    // $absolutePathSubstr = "/var/www/app/data/"
+
+                    /*
+                      $this->absolutePath = $this->baseDirectory;
+                      return;
+                     */
+                }
+            }
+
+            $this->absolutePath = $pathRootDirectory . $path;
+        }
+    }
+
+    protected function preparePath(string $path): string
+    {
+        $path = str_replace('\\', '/', $path);
+        $path = preg_replace('|/+|', '/', $path);
+        $path = ltrim($path, '/');
+
+        $windowsCodePage = $this->getWindowsCodePage();
+        if (false !== $windowsCodePage) {
+            $path = iconv('utf-8', $windowsCodePage, $path);
+        }
+
+        return $path;
+    }
+
+    protected function sanitizeBaseDirectory(string|null $baseDirectory): string
+    {
+        if (null === $baseDirectory || '' === $baseDirectory) {
+            return '';
+        }
+
+        $rootDir = $this->getRootDirectory($baseDirectory);
+        if (false === $rootDir) {
+            throw new HandlerException('Base directory must be absolute!');
+        } else {
+            $relative = substr($baseDirectory, strlen($rootDir));
+            $relative = $this->preparePath($relative);
+            if (!$this->isCorrectRelativePath($relative)) {
+                throw new HandlerException('Incorrect base directory!');
+            }
+            $baseDirectory = $rootDir . $relative;
+        }
+
+        return $baseDirectory;
+    }
+
+    protected function isCorrectRelativePath(string $path = ''): bool
+    {
         if (preg_match('/([^\pL\pN\pP\pS\pZ])|([\xC2\xA0])/u', $path)) {
             return false;
         }
@@ -127,25 +206,67 @@ abstract class Handler implements PathInterface, TimeInterface
         return true;
     }
 
-    protected function unchangeablePathPart(string $path): string
+    /*
+     * If return FALSE - $path is relative.
+     *
+     * Based on https://habr.com/articles/731628/
+     */
+    protected function getRootDirectory(string $path): string|false
     {
-        // Based on https://habr.com/articles/731628/
-        if (ctype_alpha($path[0]) && $path[1] == ':' && ($path[2] == '/' || $path[2] == '\\')) {
-            return substr($path, 0, 3); // Windows disk path C:\
-        }
-        if ('\\\\' !== substr($path, 0, 2)) {
-            return '';
-        }
-        if ('.' === $path[3] || '?' === $path[3]) { // Windows paths similar to \\?\D:\Plans\Marshall or \\.\D:\Projects\Human_Genome
-            if (!ctype_alpha($path[5]) || ':' !== $path[6]) {
-                throw new HandlerException('Incorrect path.');
+        if (3 <= strlen($path) && ctype_alpha($path[0]) && $path[1] == ':' && ($path[2] == '/' || $path[2] == '\\')) {
+            if (!$this->isWindows()) {
+                // Under Linux "C:\" - correct file or directory name! And it's relative.
+                return false;
+            } else {
+                // Windows disk path C:\
+                return substr($path, 0, 3);
             }
-            $from = 7;
-        } else { // Windows UNC path similar to \\192.168.1.2\Pictures\Worth or \\host\path\subpath\subsubpath
-            $from = 2;
         }
 
-        return substr($path, 0, $from);
+        if ('\\\\' === substr($path, 0, 2)) {
+            if (!$this->isWindows()) {
+                // Under Linux "\\" - correct file or directory name! And it's relative.
+                return false;
+            } else {
+                if (7 <= strlen($path) && '.' === $path[3] || '?' === $path[3]) {
+                    // Windows paths similar to \\?\D:\Plans\Marshall or \\.\D:\Projects\Human_Genome
+                    if (!ctype_alpha($path[5]) || ':' !== $path[6]) {
+                        throw new HandlerException('Incorrect path.');
+                    }
+                    $from = 7;
+                } else {
+                    // Windows UNC path similar to \\192.168.1.2\Pictures\Worth or \\host\path\subpath\subsubpath
+                    // Now path as \\host/path/subpath/subsubpath - Windows don't open this path!
+                    // It MUST be as \\host\path/subpath/subsubpath ("\" after hostname).
+                    // Now $first = "\\" and $last = "host\path/subpath/subsubpath"
+                    $pos = strpos($path, '/');
+                    if (false === $pos) {
+                        $pos = strpos($path, '\\');
+                    }
+
+                    if (false === $pos) {
+                        // Windows UNC path similar to \\192.168.1.2 or \\host
+                        // (without slash on the end).
+                        return $path . '/';
+                    }
+
+                    $from = $pos + 1;
+                }
+
+                return substr($path, 0, $from);
+            }
+        }
+
+        if ('/' === substr($path, 0, 1)) {
+            if (!$this->isWindows()) {
+                // Under Linux "/" - root directory.
+                return '/';
+            } else {
+                return false;
+            }
+        }
+
+        return false;
     }
 
     protected function isWindows(): bool

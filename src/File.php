@@ -15,11 +15,11 @@ class File extends Handler implements FileInterface
     protected $fileDeleteTries = 40; // //The number of attempts to delete a file (with an interval of ~100 milliseconds).
     protected mixed $resource = null;
 
-    public function set(string $absolutePath, int $umask = 0022): PathInterface
+    public function set(string $path, int $umask = 0022): PathInterface
     {
         $this->close();
         umask($umask);
-        $this->init($absolutePath);
+        $this->init($path);
 
         return $this;
     }
@@ -137,7 +137,8 @@ class File extends Handler implements FileInterface
 
     /*
      * Delete file. If $withEmptyDirectories = true,
-     * all empty subdirectories also will be deleted.
+     * all empty subdirectories under it, but not higher
+     * $this->baseDirectory (if it is not empty) also will be deleted.
      */
     public function delete(bool $withEmptyDirectories = false): bool
     {
@@ -173,26 +174,36 @@ class File extends Handler implements FileInterface
         return false;
     }
 
+    /*
+     * Delete all empty directories under $this->absolutePath,
+     * but not higher $this->baseDirectory (if it is not empty).
+     */
     protected function deleteEmptyDirectories(): bool
     {
-        $dir = pathinfo($this->absolutePath, PATHINFO_DIRNAME);
-        $result = true;
-        while (1 < substr_count($dir, '/') && $dir !== $this->rootDirectory) {
+        $dir = pathinfo($this->absolutePath, PATHINFO_DIRNAME) . '/';
+        $totalResult = true;
+        $baseDirectory = ('' === $this->baseDirectory) ? $this->rootDirectory : $this->baseDirectory;
+        while (1 < substr_count($dir, '/') && $dir !== $baseDirectory) {
             try {
                 $directory = new Directory($dir);
                 if (!$directory->empty($dir)) {
                     return false;
                 }
-            } catch (FileDeleteException $e) {
-                return false;
+                // true && true = TRUE; true && false = FALSE;
+                $result = $directory->delete();
+                $totalResult = $totalResult && $result;
+            } catch (DirectoryException $e) {
+                // Not doing anything, because $dir may be not existing directory.
             }
-
-            // true && true = TRUE; true && false = FALSE;
-            $result = $result && $directory->delete();
-            $dir = pathinfo($dir, PATHINFO_DIRNAME);
+            $dir = pathinfo($dir, PATHINFO_DIRNAME) . '/';
         }
 
-        return $result;
+        @clearstatcache(true, $dir);
+        if (!file_exists($dir)) {
+            return true;
+        }
+
+        return $totalResult;
     }
 
     protected function sharedLock(int $tries = 1): bool
