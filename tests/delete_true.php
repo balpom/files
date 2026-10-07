@@ -21,18 +21,10 @@ $handler->write($content);
 
 $filePath = __DIR__ . '/subdir/subsubdir/subsubsubdir/' . $fileName;
 $file = new File($filePath);
-$file->delete();
+$file->delete(true);
 
 if (!file_exists($filePath)) {
     echo 'File deleted sucseccfully!' . PHP_EOL;
-} else {
-    echo 'Something went wrong...' . PHP_EOL;
-}
-
-
-$file = new File('/path/to/not/existing/file');
-if ($file->delete()) {
-    echo 'Deleting not existing file also return TRUE.' . PHP_EOL;
 } else {
     echo 'Something went wrong...' . PHP_EOL;
 }
