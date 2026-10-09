@@ -79,6 +79,13 @@ abstract class Handler implements PathInterface, TimeInterface
         if (!$this->exists()) {
             return false;
         }
+
+        // 15032385535 is the maximum value for a timestamp that ext4 can store.
+        // See also https://www.linuxquestions.org/questions/linux-kernel-70/ext4-timestamps-a-puzzler-4175572339/
+        if (15032385535 < $time && !$this->isWindows() && 'ext4' === $this->getFileSystemForLinux($this->absolutePath)) {
+            throw new HandlerException('Time value is out of range for EXT4 file system (max 15032385535, given ' . $time . ')!');
+        }
+
         return @touch($this->absolutePath, $time);
     }
 
@@ -108,45 +115,6 @@ abstract class Handler implements PathInterface, TimeInterface
             $path = $this->preparePath($path);
             if (!$this->isCorrectRelativePath($path)) {
                 throw new HandlerException('Incorrect absolute path!');
-            }
-
-            $this->absolutePath = $pathRootDirectory . $path;
-
-            return;
-
-            // Всё, что ниже - постепенно удалить!
-//
-// die($pathRootDirectory . ' --- ' . $path . ' === ' . $this->baseDirectory);
-
-
-            $absolutePath = $pathRootDirectory . $path;
-
-            if ('' !== $this->baseDirectory) {
-                $baseDirectoryLen = strlen($this->baseDirectory);
-                $absolutePathSubstr = substr($absolutePath, 0, $baseDirectoryLen);
-
-// die($absolutePath . PHP_EOL . $this->baseDirectory . PHP_EOL . substr($absolutePath, 0, $baseDirectoryLen) . PHP_EOL);
-
-                if ($this->baseDirectory !== $absolutePathSubstr) {
-                    if ('/' !== substr($absolutePath, -1)) {
-                        throw new HandlerException('Absolute file path must be in base directory, if it is not empty');
-                    }
-                    $absolutePathLen = strlen($absolutePath);
-                    $baseDirectorySubstr = substr($this->baseDirectory, 0, $absolutePathLen);
-                    if ($absolutePath !== $baseDirectorySubstr) {
-                        throw new HandlerException('Absolute directory path must be part of base directory, if it is not empty');
-                    }
-
-                    // Lengthen the shorter absolute path.
-                    // As sample:
-                    // $baseDirectory = "/var/www/app/data/subdir/"
-                    // $absolutePathSubstr = "/var/www/app/data/"
-
-                    /*
-                      $this->absolutePath = $this->baseDirectory;
-                      return;
-                     */
-                }
             }
 
             $this->absolutePath = $pathRootDirectory . $path;
@@ -295,6 +263,35 @@ abstract class Handler implements PathInterface, TimeInterface
         }
 
         return $this->windowsCodePage;
+    }
+
+    protected function getFileSystemForLinux(string $absolutePath): string|false
+    {
+        try {
+            $output = shell_exec('df -Th | grep "^/dev"');
+            if (empty($output)) {
+                return false;
+            }
+        } catch (\Throwable $e) {
+            return false;
+        }
+
+        $lines = explode(chr(10), $output); // /dev/md1 ext4 687G 32G 621G 5% /var
+        foreach ($lines as $line) {
+            if (empty($line)) {
+                continue;
+            }
+            $line = trim(preg_replace('/\s+/', ' ', $line));
+            $field = explode(' ', $line);
+            $len = strlen($field[6]);
+            if ($field[6] <> substr($absolutePath, 0, 4)) {
+                continue;
+            }
+
+            return $field[1];
+        }
+
+        return false;
     }
 
 }
