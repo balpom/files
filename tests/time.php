@@ -26,6 +26,17 @@ echo ($file->getTime()) . PHP_EOL; // 7777777777
 try {
     $file->setTime(222222222222);
 } catch (Exception $e) {
-    echo 'EXCEPTION: ' . $e . PHP_EOL;
+    echo 'EXCEPTION: ' . $e->getMessage() . PHP_EOL;
+}
+echo ($file->getTime()) . PHP_EOL;
+//
+// For Linux:
+// -2147483648 is the minimum value for a timestamp that EXT4 file system can store.
+//
+// For Windows system 0 is the minimum value for a timestamp.
+try {
+    $file->setTime(-333333333333);
+} catch (Exception $e) {
+    echo 'EXCEPTION: ' . $e->getMessage() . PHP_EOL;
 }
 echo ($file->getTime()) . PHP_EOL;
