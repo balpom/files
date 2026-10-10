@@ -108,6 +108,13 @@ class Directory extends Handler implements DirectoryInterface
         return $this->isDirectoryEmpty($this->absolutePath);
     }
 
+    protected function checkPath(string $path): void
+    {
+        // Many checkings are performed in Handler::checkPathCommon method.
+        // Here, something is being checked that relates only to directories.
+        // What it could be yet didn’t come up with. :-)
+    }
+
     protected function isDirectoryEmpty(string $dir): bool
     {
         $this->checkDirectory($dir);

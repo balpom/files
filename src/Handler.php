@@ -54,6 +54,11 @@ abstract class Handler implements PathInterface, TimeInterface
     abstract public function set(string $path, int $umask = 0022): PathInterface;
 
     /*
+     * Check a file or a directory path for limitations.
+     */
+    abstract protected function checkPath(string $path): void;
+
+    /*
      * Check file or directory existence.
      */
     public function exists(): bool
@@ -82,8 +87,28 @@ abstract class Handler implements PathInterface, TimeInterface
 
         // 15032385535 is the maximum value for a timestamp that ext4 can store.
         // See also https://www.linuxquestions.org/questions/linux-kernel-70/ext4-timestamps-a-puzzler-4175572339/
-        if (15032385535 < $time && !$this->isWindows() && 'ext4' === $this->getFileSystemForLinux($this->absolutePath)) {
+        if (15032385535 < $time && 'ext4' === $this->getFileSystemForLinux($this->absolutePath)) {
             throw new HandlerException('Time value is out of range for EXT4 file system (max 15032385535, given ' . $time . ')!');
+        }
+
+        // -2147483648 is the minimum value for a timestamp that ext4 can store.
+        if (-2147483648 > $time && 'ext4' === $this->getFileSystemForLinux($this->absolutePath)) {
+            throw new HandlerException('Time value is out of range for EXT4 file system (min -2147483648, given ' . $time . ')!');
+        }
+
+        // 253402289999 is 9999-12-31 23:59:59
+        // On my Windows system max time value, with which touch($time) works correctly, is 910692730085.
+        // 910692730085 is 30828-09-14 02:48:05 - what is means i dont't know. :-)
+        if (910692730085 < $time && $this->isWindows()) {
+            throw new HandlerException('Time value is out of range for Windows (max 253402289999, given ' . $time . ')!');
+        }
+
+        // On my Windows system code
+        // touch(-1);
+        // filemtime($path);
+        // returns 1844674407369 (2^64 = 18446744073709551616 like 1844674407370 = 1844674407369 + 1).
+        if (0 > $time && $this->isWindows()) {
+            throw new HandlerException('Time value must be positive for Windows (given ' . $time . ')!');
         }
 
         return @touch($this->absolutePath, $time);
@@ -95,14 +120,16 @@ abstract class Handler implements PathInterface, TimeInterface
             throw new HandlerException('Empty path!');
         }
 
+        $path = $this->preparePath($path);
         $pathRootDirectory = $this->getRootDirectory($path);
         if (false === $pathRootDirectory) {
             // Given path is relative.
-            $path = $this->preparePath($path);
             if ('' === $path) {
                 throw new HandlerException('Empty relative path!');
             }
-            if (!$this->isCorrectRelativePath($path)) {
+            try {
+                $this->checkPathCommon($path);
+            } catch (PathException $e) {
                 throw new HandlerException('Incorrect relative path!');
             }
             if ('' !== $this->baseDirectory) {
@@ -112,11 +139,11 @@ abstract class Handler implements PathInterface, TimeInterface
             }
         } else {
             $path = substr($path, strlen($pathRootDirectory));
-            $path = $this->preparePath($path);
-            if (!$this->isCorrectRelativePath($path)) {
+            try {
+                $this->checkPathCommon($path);
+            } catch (PathException $e) {
                 throw new HandlerException('Incorrect absolute path!');
             }
-
             $this->absolutePath = $pathRootDirectory . $path;
         }
     }
@@ -125,7 +152,6 @@ abstract class Handler implements PathInterface, TimeInterface
     {
         $path = str_replace('\\', '/', $path);
         $path = preg_replace('|/+|', '/', $path);
-        $path = ltrim($path, '/');
 
         $windowsCodePage = $this->getWindowsCodePage();
         if (false !== $windowsCodePage) {
@@ -133,6 +159,43 @@ abstract class Handler implements PathInterface, TimeInterface
         }
 
         return $path;
+    }
+
+    protected function checkPathCommon(string $path = ''): void
+    {
+        if (preg_match('/([^\pL\pN\pP\pS\pZ])|([\xC2\xA0])/u', $path)) {
+            throw new PathException('Invalid characters in the path!');
+        }
+
+        $baseName = pathinfo($path, PATHINFO_BASENAME,);
+        $pathLenght = strlen($path);
+        if ($this->isWindows()) {
+            if (260 < $pathLenght) {
+                throw new PathException('For Windows path lenght is out of range!');
+            }
+            if (strpbrk($path, ':*?<>|"')) {
+                throw new PathException('For Windows it is invalid characters in the path!');
+            }
+            // "/path/./sample1" or "/path/../sample2" or "/path/...../sample3" or "/path/sample4/....."
+            // is illegal for Windows
+            if (preg_match('(/\.+/)', $path) || preg_match('(/\.+/)', $baseName)) {
+                throw new PathException('For Windows path parts cannot consist only from points!');
+            }
+        } else {
+            // TODO: File systems other than EXT4 may have their own limitations.
+            if (4096 < $pathLenght) {
+                throw new PathException('For Linux path lenght is out of range!');
+            }
+            // "/path/./sample1" or "/path/../sample2" or "/path/sample3/." or "/path/sample4/.."
+            // is illegal for Linux.
+            // The file or directory name can consist of only three or more dots.
+            // In other words, "/path/.../sample" or "/path/sample/..." is legal for Linux!
+            if (preg_match('(/(\.){1,2}/)', $path) || preg_match('(/\.+/)', $path)) {
+                throw new PathException('For Windows path parts cannot consist only from points!');
+            }
+        }
+
+        $this->checkPath($path);
     }
 
     protected function sanitizeBaseDirectory(string|null $baseDirectory): string
@@ -147,31 +210,15 @@ abstract class Handler implements PathInterface, TimeInterface
         } else {
             $relative = substr($baseDirectory, strlen($rootDir));
             $relative = $this->preparePath($relative);
-            if (!$this->isCorrectRelativePath($relative)) {
+            try {
+                $this->checkPathCommon($relative);
+            } catch (PathException $e) {
                 throw new HandlerException('Incorrect base directory!');
             }
             $baseDirectory = $rootDir . $relative;
         }
 
         return $baseDirectory;
-    }
-
-    protected function isCorrectRelativePath(string $path = ''): bool
-    {
-        if (preg_match('/([^\pL\pN\pP\pS\pZ])|([\xC2\xA0])/u', $path)) {
-            return false;
-        }
-        if ($this->isWindows() && strpbrk($path, ':*?<>|"')) {
-            return false;
-        }
-        if (false !== strpos($path, '/.')) {
-            return false;
-        }
-        if (substr_count($path, '.') === strlen($path)) {
-            return false;
-        }
-
-        return true;
     }
 
     /*
@@ -267,6 +314,10 @@ abstract class Handler implements PathInterface, TimeInterface
 
     protected function getFileSystemForLinux(string $absolutePath): string|false
     {
+        if ($this->isWindows()) {
+            return false;
+        }
+
         try {
             $output = shell_exec('df -Th | grep "^/dev"');
             if (empty($output)) {

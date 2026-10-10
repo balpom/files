@@ -206,6 +206,14 @@ class File extends Handler implements FileInterface
         return $totalResult;
     }
 
+    protected function checkPath(string $path): void
+    {
+        $baseName = pathinfo($path, PATHINFO_BASENAME,);
+        if (255 < strlen($baseName)) {
+            throw new FileException('File name lenght is out of range!');
+        }
+    }
+
     protected function sharedLock(int $tries = 1): bool
     {
         $tries = 0 < $tries ? $tries : 1;
