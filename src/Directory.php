@@ -108,11 +108,89 @@ class Directory extends Handler implements DirectoryInterface
         return $this->isDirectoryEmpty($this->absolutePath);
     }
 
+    /*
+     * Scan directory on $level levels and return all files in it as "File" object.
+     *
+     * If $level = TRUE - scan all levels.
+     *
+     * IF $level = FALSE or $level < 1 - scan on one level.
+     */
+    public function files(int|bool $level = 1): array
+    {
+        return $this->getDirectoryTree($this->absolutePath, $level, true, false);
+    }
+
+    /*
+     * Scan directory on $level levels and return all directories in it as "Directory" object.
+     *
+     * If $level = TRUE - scan all levels.
+     *
+     * IF $level = FALSE or $level < 1 - scan on one level.
+     */
+    public function directories(int|bool $level = 1): array
+    {
+        return $this->getDirectoryTree($this->absolutePath, $level, false, true);
+    }
+
+    /*
+     * Scan directory on $level levels and return all files and directories in it
+     * as "File" and "Directory" objects.
+     *
+     * If $level = TRUE - scan all levels.
+     *
+     * IF $level = FALSE or $level < 1 - scan on one level.
+     */
+    public function objects(int|bool $level = 1): array
+    {
+        return $this->getDirectoryTree($this->absolutePath, $level);
+    }
+
+    protected function getDirectoryTree(string $dir, int|bool $level = 1, bool $withFiles = true, $withDirectories = true, int $currentLevel = 0): array
+    {
+        if (false === $level || 1 > $level) {
+            $level = 1;
+        }
+        $dir = $this->sanitizeDirectory($dir);
+        $paths = $this->getDirectoryContent($dir);
+        $currentLevel++;
+        $result = [];
+        foreach ($paths as $path) {
+            $path = $dir . $path;
+            @clearstatcache(true, $path);
+            if (!@file_exists($path)) {
+                continue;
+            }
+            if (@is_dir($path)) {
+                if ($withDirectories) {
+                    $result[] = new Directory($path);
+                }
+                if (true === $level || $level >= $currentLevel) {
+                    $result = array_merge($result, $this->getDirectoryTree($path, $level, $withFiles, $withDirectories, $currentLevel));
+                }
+            } else {
+                if ($withFiles) {
+                    $result[] = new File($path);
+                }
+            }
+        }
+
+        return $result;
+    }
+
     protected function checkPath(string $path): void
     {
         // Many checkings are performed in Handler::checkPathCommon method.
         // Here, something is being checked that relates only to directories.
         // What it could be yet didn’t come up with. :-)
+    }
+
+    protected function sanitizeDirectory(string $dir): string
+    {
+        if ('/' !== substr($dir, -1)) {
+            $dir .= '/';
+        }
+
+        return $dir;
     }
 
     protected function isDirectoryEmpty(string $dir): bool
@@ -137,22 +215,22 @@ class Directory extends Handler implements DirectoryInterface
     protected function checkDirectory(string $dir): void
     {
         @clearstatcache(true, $dir);
-        if (!file_exists($dir)) {
+        if (!@file_exists($dir)) {
             throw new DirectoryException('Not existing directory: ' . $dir);
         }
-        if (!is_dir($dir)) {
+        if (!@is_dir($dir)) {
             throw new DirectoryException('It is not a directory: ' . $dir);
         }
     }
 
     protected function getDirectoryContent(string $dir): array
     {
-        $files = @scandir($dir);
-        if (false === $files) {
+        $paths = @scandir($dir);
+        if (false === $paths) {
             throw new DirectoryException('Unable to scan directory: ' . $dir);
         }
 
-        return array_diff($files, ['.', '..']);
+        return array_values(array_diff($paths, ['.', '..']));
     }
 
     protected function deleteDirectory(string $dir): bool
@@ -182,10 +260,11 @@ class Directory extends Handler implements DirectoryInterface
 
     protected function deleteDirectoryTree(string $dir): bool
     {
+        $dir = $this->sanitizeDirectory($dir);
         $files = $this->getDirectoryContent($dir);
         $totalResult = true;
         foreach ($files as $file) {
-            $path = $dir . '/' . $file;
+            $path = $dir . $file;
             // true && true = TRUE; true && false = FALSE;
             @clearstatcache(true, $dir);
             if (is_dir($path)) {
@@ -204,13 +283,14 @@ class Directory extends Handler implements DirectoryInterface
 
     protected function cleanDirectoryTree(string $dir): bool
     {
+        $dir = $this->sanitizeDirectory($dir);
         $files = $this->getDirectoryContent($dir);
         $totalResult = true;
         foreach ($files as $file) {
-            $path = $dir . '/' . $file;
+            $path = $dir . $file;
             // true && true = TRUE; true && false = FALSE;
             @clearstatcache(true, $dir);
-            if (is_dir($path)) {
+            if (@is_dir($path)) {
                 if ($this->isDirectoryEmpty($path)) {
                     $result = (new Directory($path))->delete();
                     $totalResult = $totalResult && $result;
@@ -232,13 +312,14 @@ class Directory extends Handler implements DirectoryInterface
 
     protected function deepCleanDirectoryTree(string $dir): bool
     {
+        $dir = $this->sanitizeDirectory($dir);
         $files = $this->getDirectoryContent($dir);
         $totalResult = true;
         foreach ($files as $file) {
-            $path = $dir . '/' . $file;
+            $path = $dir . $file;
             // true && true = TRUE; true && false = FALSE;
             @clearstatcache(true, $dir);
-            if (is_dir($path)) {
+            if (@is_dir($path)) {
                 if ($this->isDirectoryEmpty($path)) {
                     $result = (new Directory($path))->delete();
                     $totalResult = $totalResult && $result;
