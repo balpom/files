@@ -35,4 +35,9 @@ interface PathInterface
      */
     public function exists(): bool;
 
+    /*
+     * Return path to file or directory.
+     */
+    public function path(): string;
+
 }
