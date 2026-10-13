@@ -114,6 +114,18 @@ abstract class Handler implements PathInterface, TimeInterface
         return @touch($this->absolutePath, $time);
     }
 
+    /*
+     * Return path to file or directory.
+     */
+    public function path(): string
+    {
+        if (empty($this->absolutePath)) {
+            throw new HandlerException('Empty absolute path!');
+        }
+
+        return $this->absolutePath;
+    }
+
     protected function init(string $path = ''): void
     {
         if ('' === $path) {
